@@ -1,0 +1,26 @@
+.DS_Store
+
+# Lambda ZIP files are built in CI — never commit binaries
+lambda/**/*.zip
+
+# Per-stack TemplateConfiguration JSONs are generated from config/deployment.json at build time
+config/01-foundation-config.json
+config/02-website-config.json
+config/03-cicd-config.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Local environment files
+*.env
+.env.*
+
+# AWS SAM local build artifacts
+.aws-sam/
+
+# Node (if any tooling is added)
+node_modules/

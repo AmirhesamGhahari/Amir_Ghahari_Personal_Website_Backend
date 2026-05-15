@@ -1,0 +1,515 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: |
+  Website stack for amir-ghahari.dev.
+  Combines static site hosting (CloudFront) and the backend API (Lambda, API Gateway,
+  DynamoDB, SNS) into a single deployable unit. This stack is updated automatically by
+  the backend CodePipeline (03-cicd-backend.yaml) on every push to main.
+
+  Prerequisites:
+    - 01-foundation.yaml deployed (FoundationStackName parameter must match)
+    - The static S3 bucket (StaticBucketName) already exists — managed by the frontend repo.
+      Before deploying this stack, the frontend pipeline.yaml must have its WebsiteBucketPolicy
+      resource and public access overrides removed (this stack takes ownership of the bucket policy).
+    - ACM certificate for the CloudFront alias domain pre-created in us-east-1
+      (CloudFront requires certificates in us-east-1 regardless of stack region)
+
+  Hosted Zone ID (amir-ghahari.dev) default: Z068537516QXV7OMQVCH1 (override via HostedZoneId parameter)
+
+
+Parameters:
+
+  FoundationStackName:
+    Type: String
+    Default: amir-ghahari-foundation
+    Description: Name of the deployed 01-foundation.yaml stack.
+
+  StaticBucketName:
+    Type: String
+    Default: amirghahari-website
+    Description: |
+      Name of the existing static website S3 bucket (managed by the frontend repo's pipeline.yaml).
+      This stack creates the CloudFront OAC bucket policy for this bucket — the frontend stack
+      must no longer have a WebsiteBucketPolicy resource for the same bucket.
+
+  CloudFrontCertArn:
+    Type: String
+    Description: |
+      ARN of an ACM certificate in us-east-1 covering the CloudFront alias domain (test.amir-ghahari.dev).
+      Example: arn:aws:acm:us-east-1:123456789012:certificate/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+
+  ContactTableName:
+    Type: String
+    Default: amirghahari-website-contacts-table
+    Description: Name of the DynamoDB table that stores contact form submissions.
+
+  ContactSNSTopicName:
+    Type: String
+    Default: amirghahari-website-contacts-topic
+    Description: Name of the SNS topic that sends email notifications on new contact submissions.
+
+  HostedZoneId:
+    Type: String
+    Default: Z068537516QXV7OMQVCH1
+    Description: Route53 Hosted Zone ID for the amir-ghahari.dev domain.
+
+  CloudFrontAlias:
+    Type: String
+    Default: test.amir-ghahari.dev
+    Description: Domain alias for the CloudFront distribution (e.g. test.amir-ghahari.dev or amir-ghahari.dev).
+
+  RootDomain:
+    Type: String
+    Default: amir-ghahari.dev
+    Description: Root domain name — www record will redirect to this.
+
+  ApiDomain:
+    Type: String
+    Default: api.amir-ghahari.dev
+    Description: Custom domain for the API Gateway (ACM certificate must exist for this domain in the stack region).
+
+  NotificationEmail:
+    Type: String
+    Default: ahesam.ghahari@gmail.com
+    Description: Email address that receives SNS notifications on new contact form submissions.
+
+  LambdaFunctionName:
+    Type: String
+    Default: amirghahari-website-contact
+    Description: Name of the Lambda function that handles contact form submissions.
+
+  LambdaRoleName:
+    Type: String
+    Default: amirghahari-website-contact-lambda-role
+    Description: IAM role name for the contact form Lambda function.
+
+  LambdaS3Key:
+    Type: String
+    Default: website_post_contact.zip
+    Description: S3 key (filename) of the Lambda deployment ZIP in the foundation lambdas bucket.
+
+  ApiGatewayRoleName:
+    Type: String
+    Default: amirghahari-api-gateway-cloudwatch-role
+    Description: IAM role name that grants API Gateway permission to write CloudWatch logs.
+
+  ApiName:
+    Type: String
+    Default: amirghahari-website-api
+    Description: Name of the API Gateway REST API.
+
+  ApiStageName:
+    Type: String
+    Default: prod
+    Description: API Gateway stage name (e.g. prod, staging).
+
+
+Resources:
+
+# ─── Static Hosting ───────────────────────────────────────────────────────────
+
+  WebsiteOAC:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: amirghahari-website-oac
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  # This resource owns the bucket policy for the existing static bucket.
+  # The frontend pipeline.yaml must NOT have a WebsiteBucketPolicy resource for the same bucket.
+  WebsiteStaticBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref StaticBucketName
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowCloudFrontOACRead
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub "arn:aws:s3:::${StaticBucketName}/*"
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${WebsiteCloudfrontDistribution}"
+
+  WebsiteCloudfrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: "amir-ghahari.dev website CDN distribution"
+        DefaultRootObject: index.html
+        HttpVersion: http2and3
+        IPV6Enabled: true
+        PriceClass: PriceClass_All
+        Aliases:
+          - !Ref CloudFrontAlias
+        ViewerCertificate:
+          AcmCertificateArn: !Ref CloudFrontCertArn
+          SslSupportMethod: sni-only
+          MinimumProtocolVersion: TLSv1.2_2021
+        Logging:
+          Bucket: !Sub
+            - "${LoggingBucketName}.s3.amazonaws.com"
+            - LoggingBucketName: !ImportValue
+                Fn::Sub: "${FoundationStackName}-LoggingBucketName"
+          Prefix: cloudfront-access/
+        Origins:
+          - Id: StaticS3Origin
+            DomainName: !Sub "${StaticBucketName}.s3.${AWS::Region}.amazonaws.com"
+            ConnectionAttempts: 3
+            ConnectionTimeout: 10
+            OriginAccessControlId: !Ref WebsiteOAC
+            S3OriginConfig:
+              OriginAccessIdentity: ""
+        DefaultCacheBehavior:
+          AllowedMethods:
+            - GET
+            - HEAD
+          CachedMethods:
+            - GET
+            - HEAD
+          # CachingOptimized managed policy — caches GET/HEAD, respects Cache-Control headers
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+          Compress: true
+          TargetOriginId: StaticS3Origin
+          ViewerProtocolPolicy: redirect-to-https
+
+  WwwToRootRecord:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Sub "www.${RootDomain}."
+      Type: A
+      AliasTarget:
+        DNSName: !Sub "${RootDomain}."
+        HostedZoneId: !Ref HostedZoneId
+
+  RootDomainAliasRecord:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Sub "${CloudFrontAlias}."
+      Type: A
+      AliasTarget:
+        DNSName: !GetAtt WebsiteCloudfrontDistribution.DomainName
+        # Z2FDTNDATAQYW2 is the global constant hosted zone ID for all CloudFront distributions
+        HostedZoneId: Z2FDTNDATAQYW2
+
+
+# ─── DynamoDB ────────────────────────────────────────────────────────────────
+
+  DynamoDBWebsiteContactTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Ref ContactTableName
+      AttributeDefinitions:
+        - AttributeName: contact-id
+          AttributeType: S
+        - AttributeName: created-at
+          AttributeType: S
+      KeySchema:
+        - AttributeName: contact-id
+          KeyType: HASH
+        - AttributeName: created-at
+          KeyType: RANGE
+      TableClass: STANDARD
+      BillingMode: PROVISIONED
+      ProvisionedThroughput:
+        ReadCapacityUnits: 1
+        WriteCapacityUnits: 1
+
+
+# ─── SNS ─────────────────────────────────────────────────────────────────────
+
+  WebsiteContactSNSTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Ref ContactSNSTopicName
+
+  MySubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      Endpoint: !Ref NotificationEmail
+      Protocol: email
+      TopicArn: !Ref WebsiteContactSNSTopic
+
+  WebsiteContactSNSTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics:
+        - !Ref WebsiteContactSNSTopic
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowLambdaPublish
+            Effect: Allow
+            Principal:
+              AWS: !GetAtt WebsiteContactLambdaRole.Arn
+            Action: sns:Publish
+            Resource: !Ref WebsiteContactSNSTopic
+
+
+# ─── Lambda ──────────────────────────────────────────────────────────────────
+
+  WebsiteContactLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Ref LambdaRoleName
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DynamoDBAndSNSAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                Resource: !GetAtt DynamoDBWebsiteContactTable.Arn
+              - Effect: Allow
+                Action:
+                  - sns:Publish
+                Resource: !Ref WebsiteContactSNSTopic
+
+  LambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${LambdaFunctionName}"
+      RetentionInDays: 30
+
+  WebsiteContactLambda:
+    Type: AWS::Lambda::Function
+    DependsOn: LambdaLogGroup
+    Properties:
+      FunctionName: !Ref LambdaFunctionName
+      Description: "Handles contact form POST requests: validates input, stores in DynamoDB, notifies via SNS."
+      Architectures:
+        - x86_64
+      Runtime: python3.12
+      Handler: website_post_contact.lambda_handler
+      MemorySize: 128
+      Timeout: 20
+      EphemeralStorage:
+        Size: 512
+      Role: !GetAtt WebsiteContactLambdaRole.Arn
+      Code:
+        S3Bucket: !ImportValue
+          Fn::Sub: "${FoundationStackName}-LambdasBucketName"
+        S3Key: !Ref LambdaS3Key
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref DynamoDBWebsiteContactTable
+          TOPIC_ARN: !Ref WebsiteContactSNSTopic
+
+  ApiGatewayInvokeLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref WebsiteContactLambda
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebsiteApi}/*"
+
+
+# ─── CloudWatch ───────────────────────────────────────────────────────────────
+
+  ApiGatewayLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/apigateway/${ApiName}"
+      RetentionInDays: 30
+
+
+# ─── API Gateway ──────────────────────────────────────────────────────────────
+
+  ApiGatewayRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Ref ApiGatewayRoleName
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: apigateway.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs
+
+  ApiGatewayAccount:
+    Type: AWS::ApiGateway::Account
+    Properties:
+      CloudWatchRoleArn: !GetAtt ApiGatewayRole.Arn
+
+  WebsiteApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: !Ref ApiName
+      Description: "REST API backend for the amir-ghahari.dev website contact form."
+      ApiKeySourceType: HEADER
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+        IpAddressType: ipv4
+      Mode: overwrite
+
+  WebsiteContactResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref WebsiteApi
+      ParentId: !GetAtt WebsiteApi.RootResourceId
+      PathPart: contact-page
+
+  ContactPostMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref WebsiteApi
+      ResourceId: !Ref WebsiteContactResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      ApiKeyRequired: false
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        TimeoutInMillis: 3000
+        Uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${WebsiteContactLambda.Arn}/invocations"
+
+  ContactOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref WebsiteApi
+      ResourceId: !Ref WebsiteContactResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+        IntegrationResponses:
+          - StatusCode: "200"
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+              method.response.header.Access-Control-Allow-Methods: "'POST,OPTIONS'"
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+      MethodResponses:
+        - StatusCode: "200"
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Headers: true
+
+  ApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - ContactPostMethod
+      - ContactOptionsMethod
+    Properties:
+      RestApiId: !Ref WebsiteApi
+      Description: "Production deployment for the amir-ghahari.dev API."
+
+  ApiStage:
+    Type: AWS::ApiGateway::Stage
+    DependsOn:
+      - ApiGatewayAccount
+      - ApiGatewayLogGroup
+    Properties:
+      StageName: !Ref ApiStageName
+      Description: !Sub "API stage (${ApiStageName}) for the ${ApiDomain} API."
+      RestApiId: !Ref WebsiteApi
+      DeploymentId: !Ref ApiDeployment
+      AccessLogSetting:
+        DestinationArn: !GetAtt ApiGatewayLogGroup.Arn
+        Format: '{"requestId":"$context.requestId","ip":"$context.identity.sourceIp","requestTime":"$context.requestTime","httpMethod":"$context.httpMethod","routeKey":"$context.resourcePath","status":"$context.status","protocol":"$context.protocol","responseLength":"$context.responseLength"}'
+      MethodSettings:
+        - ResourcePath: "/*"
+          HttpMethod: "*"
+          LoggingLevel: INFO
+          MetricsEnabled: true
+          ThrottlingBurstLimit: 15
+          ThrottlingRateLimit: 5
+
+
+# ─── ACM + Custom Domain + Route53 ───────────────────────────────────────────
+
+  ApiCertificateACM:
+    Type: AWS::CertificateManager::Certificate
+    Properties:
+      DomainName: !Ref ApiDomain
+      ValidationMethod: DNS
+      DomainValidationOptions:
+        - DomainName: !Ref ApiDomain
+          HostedZoneId: !Ref HostedZoneId
+
+  ApiCustomDomain:
+    Type: AWS::ApiGateway::DomainName
+    DependsOn: ApiCertificateACM
+    Properties:
+      DomainName: !Ref ApiDomain
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+      RegionalCertificateArn: !Ref ApiCertificateACM
+
+  ApiBasePathMapping:
+    Type: AWS::ApiGateway::BasePathMapping
+    Properties:
+      DomainName: !Ref ApiCustomDomain
+      RestApiId: !Ref WebsiteApi
+      Stage: !Ref ApiStageName
+
+  ApiAliasRecord:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Sub "${ApiDomain}."
+      Type: A
+      AliasTarget:
+        DNSName: !GetAtt ApiCustomDomain.RegionalDomainName
+        HostedZoneId: !GetAtt ApiCustomDomain.RegionalHostedZoneId
+
+
+Outputs:
+
+  CloudFrontDistributionId:
+    Description: |
+      CloudFront distribution ID. Used in the frontend buildspec.yml for cache invalidation.
+      Add this as the CF_DIST_ID environment variable in the frontend CodeBuild project.
+    Value: !Ref WebsiteCloudfrontDistribution
+    Export:
+      Name: !Sub "${AWS::StackName}-CloudFrontDistributionId"
+
+  CloudFrontDomainName:
+    Description: CloudFront distribution domain name (e.g. d1234abcd.cloudfront.net)
+    Value: !GetAtt WebsiteCloudfrontDistribution.DomainName
+    Export:
+      Name: !Sub "${AWS::StackName}-CloudFrontDomainName"
+
+  ApiUrl:
+    Description: Base URL of the API Gateway prod stage
+    Value: !Sub "https://${WebsiteApi}.execute-api.${AWS::Region}.amazonaws.com/${ApiStageName}"
+    Export:
+      Name: !Sub "${AWS::StackName}-ApiUrl"
+
+  ContactEndpoint:
+    Description: Full URL of the contact form POST endpoint
+    Value: !Sub "https://${ApiDomain}/contact-page"
+    Export:
+      Name: !Sub "${AWS::StackName}-ContactEndpoint"
+
+  LambdaArn:
+    Description: ARN of the contact Lambda function
+    Value: !GetAtt WebsiteContactLambda.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-LambdaArn"

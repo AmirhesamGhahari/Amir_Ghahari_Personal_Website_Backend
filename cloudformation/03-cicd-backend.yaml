@@ -1,0 +1,590 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: |
+  Backend CI/CD stack for amir-ghahari.dev.
+  Creates a CodePipeline that watches the backend GitHub repo and automatically:
+    1. Packages the Lambda function into a ZIP and uploads it to S3
+    2. Validates all three CloudFormation templates
+    3. Deploys all three stacks in sequence:
+         a. 01-foundation.yaml  (shared S3 infrastructure)
+         b. 02-website.yaml     (CloudFront + Lambda + API Gateway + DynamoDB + SNS)
+         c. 03-cicd-backend.yaml (this stack — self-update)
+
+  After deploying this stack, one manual step is required:
+    AWS Console → CodePipeline → Settings → Connections
+    → find the GitHub connection (status: Pending) → click "Update pending connection"
+    → authorize via GitHub OAuth → status changes to "Available"
+  After that, the pipeline is fully automated on every push to the configured branch.
+
+  Depends on: 01-foundation.yaml (for S3 bucket imports)
+
+
+Parameters:
+
+  FoundationStackName:
+    Type: String
+    Default: amir-ghahari-foundation
+    Description: Name of the deployed 01-foundation.yaml stack.
+
+  BackendStackName:
+    Type: String
+    Default: amir-ghahari-website
+    Description: Name of the 02-website.yaml stack that this pipeline will create/update.
+
+  CicdStackName:
+    Type: String
+    Default: amir-ghahari-cicd-backend
+    Description: Name of THIS stack — used in the self-update deploy action. Must match the actual deployed stack name.
+
+  StaticBucketName:
+    Type: String
+    Default: amirghahari-website
+    Description: Name of the existing static website S3 bucket — passed through to 02-website.yaml.
+
+  CloudFrontCertArn:
+    Type: String
+    Description: ACM certificate ARN in us-east-1 for CloudFront — passed through to 02-website.yaml.
+
+  GitHubOwner:
+    Type: String
+    Default: amirhesamghahari
+    Description: GitHub username or organization that owns the backend repository.
+
+  GitHubRepo:
+    Type: String
+    Description: Name of the GitHub repository containing the backend source code (this repo).
+
+  GitHubBranch:
+    Type: String
+    Default: main
+    Description: Branch to trigger the pipeline on.
+
+  GitHubConnectionName:
+    Type: String
+    Default: amirghahari-github-connection
+    Description: Name of the CodeStar Connection to GitHub.
+
+  CodeBuildProjectName:
+    Type: String
+    Default: amirghahari-backend-build
+    Description: Name of the CodeBuild project that packages Lambda and validates templates.
+
+  CodePipelineName:
+    Type: String
+    Default: amirghahari-backend-pipeline
+    Description: Name of the CodePipeline pipeline.
+
+  # These parameters mirror the defaults in 02-website.yaml and 01-foundation.yaml.
+  # They are used to scope IAM policies in CloudFormationDeployRole.
+  ContactTableName:
+    Type: String
+    Default: amirghahari-website-contacts-table
+  ContactSNSTopicName:
+    Type: String
+    Default: amirghahari-website-contacts-topic
+  LambdaFunctionName:
+    Type: String
+    Default: amirghahari-website-contact
+  LambdaRoleName:
+    Type: String
+    Default: amirghahari-website-contact-lambda-role
+  ApiGatewayRoleName:
+    Type: String
+    Default: amirghahari-api-gateway-cloudwatch-role
+  HostedZoneId:
+    Type: String
+    Default: Z068537516QXV7OMQVCH1
+  LoggingBucketName:
+    Type: String
+    Default: amirghahari-website-access-logs
+    Description: Foundation logging bucket name — used to scope S3 management permissions.
+  LambdasBucketName:
+    Type: String
+    Default: amir-ghahari-website-lambdas
+    Description: Foundation lambdas bucket name — used to scope S3 management permissions.
+  ArtifactsBucketName:
+    Type: String
+    Default: amir-ghahari-pipeline-artifacts
+    Description: Foundation artifacts bucket name — used to scope S3 management permissions.
+
+
+Resources:
+
+# ─── GitHub Connection ────────────────────────────────────────────────────────
+
+  GitHubConnection:
+    Type: AWS::CodeStarConnections::Connection
+    Properties:
+      ConnectionName: !Ref GitHubConnectionName
+      ProviderType: GitHub
+
+
+# ─── IAM Roles ───────────────────────────────────────────────────────────────
+
+  CodeBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: amirghahari-backend-codebuild-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: BackendBuildPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: CloudWatchLogs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${CodeBuildProjectName}*"
+              - Sid: LambdasBucketAccess
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:GetObjectVersion
+                Resource: !Sub
+                  - "arn:aws:s3:::${LambdasBucket}/*"
+                  - LambdasBucket: !ImportValue
+                      Fn::Sub: "${FoundationStackName}-LambdasBucketName"
+              - Sid: ArtifactsBucketAccess
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:GetObjectVersion
+                Resource: !Sub
+                  - "arn:aws:s3:::${ArtifactsBucket}/*"
+                  - ArtifactsBucket: !ImportValue
+                      Fn::Sub: "${FoundationStackName}-ArtifactsBucketName"
+              - Sid: ValidateCloudFormation
+                Effect: Allow
+                Action:
+                  - cloudformation:ValidateTemplate
+                Resource: "*"
+
+  CodePipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: amirghahari-backend-codepipeline-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codepipeline.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: BackendPipelinePolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: ArtifactsBucketAccess
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:GetObjectVersion
+                  - s3:GetBucketVersioning
+                Resource:
+                  - !Sub
+                    - "arn:aws:s3:::${ArtifactsBucket}"
+                    - ArtifactsBucket: !ImportValue
+                        Fn::Sub: "${FoundationStackName}-ArtifactsBucketName"
+                  - !Sub
+                    - "arn:aws:s3:::${ArtifactsBucket}/*"
+                    - ArtifactsBucket: !ImportValue
+                        Fn::Sub: "${FoundationStackName}-ArtifactsBucketName"
+              - Sid: CodeBuildAccess
+                Effect: Allow
+                Action:
+                  - codebuild:StartBuild
+                  - codebuild:BatchGetBuilds
+                Resource: !GetAtt BackendBuildProject.Arn
+              - Sid: CloudFormationDeployAccess
+                Effect: Allow
+                Action:
+                  - cloudformation:CreateStack
+                  - cloudformation:UpdateStack
+                  - cloudformation:DescribeStacks
+                  - cloudformation:DeleteStack
+                  - cloudformation:CreateChangeSet
+                  - cloudformation:ExecuteChangeSet
+                  - cloudformation:DeleteChangeSet
+                  - cloudformation:DescribeChangeSet
+                  - cloudformation:ValidateTemplate
+                Resource:
+                  - !Sub "arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${FoundationStackName}/*"
+                  - !Sub "arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${BackendStackName}/*"
+                  - !Sub "arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${CicdStackName}/*"
+              - Sid: PassRoleToCloudFormation
+                Effect: Allow
+                Action:
+                  - iam:PassRole
+                Resource: !GetAtt CloudFormationDeployRole.Arn
+              - Sid: GitHubConnectionAccess
+                Effect: Allow
+                Action:
+                  - codestar-connections:UseConnection
+                Resource: !Ref GitHubConnection
+
+  CloudFormationDeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: amirghahari-backend-cfn-deploy-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudformation.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: BackendDeployPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: CloudFrontAccess
+                Effect: Allow
+                Action:
+                  - cloudfront:CreateDistribution
+                  - cloudfront:UpdateDistribution
+                  - cloudfront:DeleteDistribution
+                  - cloudfront:GetDistribution
+                  - cloudfront:GetDistributionConfig
+                  - cloudfront:TagResource
+                  - cloudfront:CreateOriginAccessControl
+                  - cloudfront:UpdateOriginAccessControl
+                  - cloudfront:DeleteOriginAccessControl
+                  - cloudfront:GetOriginAccessControl
+                Resource: "*"
+              - Sid: S3BucketPolicyAccess
+                Effect: Allow
+                Action:
+                  - s3:GetBucketPolicy
+                  - s3:PutBucketPolicy
+                  - s3:DeleteBucketPolicy
+                Resource: !Sub "arn:aws:s3:::${StaticBucketName}"
+              - Sid: FoundationS3Management
+                Effect: Allow
+                Action:
+                  - s3:CreateBucket
+                  - s3:DeleteBucket
+                  - s3:PutBucketVersioning
+                  - s3:GetBucketVersioning
+                  - s3:PutEncryptionConfiguration
+                  - s3:GetEncryptionConfiguration
+                  - s3:PutBucketLogging
+                  - s3:GetBucketLogging
+                  - s3:PutLifecycleConfiguration
+                  - s3:GetLifecycleConfiguration
+                  - s3:PutBucketOwnershipControls
+                  - s3:GetBucketOwnershipControls
+                  - s3:PutBucketAcl
+                  - s3:GetBucketAcl
+                  - s3:GetBucketPolicy
+                  - s3:PutBucketPolicy
+                  - s3:DeleteBucketPolicy
+                Resource:
+                  - !Sub "arn:aws:s3:::${LoggingBucketName}"
+                  - !Sub "arn:aws:s3:::${LambdasBucketName}"
+                  - !Sub "arn:aws:s3:::${ArtifactsBucketName}"
+              - Sid: DynamoDBAccess
+                Effect: Allow
+                Action:
+                  - dynamodb:CreateTable
+                  - dynamodb:DescribeTable
+                  - dynamodb:UpdateTable
+                  - dynamodb:DeleteTable
+                  - dynamodb:TagResource
+                  - dynamodb:UntagResource
+                Resource: !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${ContactTableName}"
+              - Sid: SNSAccess
+                Effect: Allow
+                Action:
+                  - sns:CreateTopic
+                  - sns:DeleteTopic
+                  - sns:Subscribe
+                  - sns:Unsubscribe
+                  - sns:SetTopicAttributes
+                  - sns:GetTopicAttributes
+                  - sns:ListSubscriptionsByTopic
+                  - sns:SetSubscriptionAttributes
+                  - sns:TagResource
+                Resource: !Sub "arn:aws:sns:${AWS::Region}:${AWS::AccountId}:${ContactSNSTopicName}"
+              - Sid: LambdaAccess
+                Effect: Allow
+                Action:
+                  - lambda:CreateFunction
+                  - lambda:UpdateFunctionCode
+                  - lambda:UpdateFunctionConfiguration
+                  - lambda:DeleteFunction
+                  - lambda:GetFunction
+                  - lambda:AddPermission
+                  - lambda:RemovePermission
+                  - lambda:GetPolicy
+                  - lambda:TagResource
+                  - lambda:ListTags
+                  - lambda:PutFunctionConcurrency
+                Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${LambdaFunctionName}"
+              - Sid: IAMRoleAccess
+                Effect: Allow
+                Action:
+                  - iam:CreateRole
+                  - iam:DeleteRole
+                  - iam:AttachRolePolicy
+                  - iam:DetachRolePolicy
+                  - iam:PutRolePolicy
+                  - iam:DeleteRolePolicy
+                  - iam:GetRole
+                  - iam:GetRolePolicy
+                  - iam:PassRole
+                  - iam:TagRole
+                  - iam:UntagRole
+                  - iam:ListRolePolicies
+                  - iam:ListAttachedRolePolicies
+                Resource:
+                  - !Sub "arn:aws:iam::${AWS::AccountId}:role/${LambdaRoleName}"
+                  - !Sub "arn:aws:iam::${AWS::AccountId}:role/${ApiGatewayRoleName}"
+                  - !Sub "arn:aws:iam::${AWS::AccountId}:role/amirghahari-backend-codebuild-role"
+                  - !Sub "arn:aws:iam::${AWS::AccountId}:role/amirghahari-backend-codepipeline-role"
+                  - !Sub "arn:aws:iam::${AWS::AccountId}:role/amirghahari-backend-cfn-deploy-role"
+              - Sid: APIGatewayAccess
+                Effect: Allow
+                Action:
+                  - apigateway:GET
+                  - apigateway:POST
+                  - apigateway:PUT
+                  - apigateway:PATCH
+                  - apigateway:DELETE
+                Resource:
+                  - !Sub "arn:aws:apigateway:${AWS::Region}::/restapis"
+                  - !Sub "arn:aws:apigateway:${AWS::Region}::/restapis/*"
+                  - !Sub "arn:aws:apigateway:${AWS::Region}::/account"
+                  - !Sub "arn:aws:apigateway:${AWS::Region}::/domainnames"
+                  - !Sub "arn:aws:apigateway:${AWS::Region}::/domainnames/*"
+              - Sid: CloudWatchLogsAccess
+                Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:DeleteLogGroup
+                  - logs:PutRetentionPolicy
+                  - logs:DescribeLogGroups
+                  - logs:TagResource
+                  - logs:UntagResource
+                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws*"
+              - Sid: ACMAccess
+                Effect: Allow
+                Action:
+                  - acm:RequestCertificate
+                  - acm:DescribeCertificate
+                  - acm:DeleteCertificate
+                  - acm:AddTagsToCertificate
+                  - acm:ListTagsForCertificate
+                Resource: "*"
+              - Sid: Route53Access
+                Effect: Allow
+                Action:
+                  - route53:ChangeResourceRecordSets
+                  - route53:GetChange
+                  - route53:ListResourceRecordSets
+                Resource:
+                  - !Sub "arn:aws:route53:::hostedzone/${HostedZoneId}"
+                  - "arn:aws:route53:::change/*"
+              - Sid: ArtifactsBucketRead
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                Resource: !Sub
+                  - "arn:aws:s3:::${ArtifactsBucket}/*"
+                  - ArtifactsBucket: !ImportValue
+                      Fn::Sub: "${FoundationStackName}-ArtifactsBucketName"
+              - Sid: LambdasBucketRead
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                Resource: !Sub
+                  - "arn:aws:s3:::${LambdasBucket}/*"
+                  - LambdasBucket: !ImportValue
+                      Fn::Sub: "${FoundationStackName}-LambdasBucketName"
+              - Sid: CodePipelineManagement
+                Effect: Allow
+                Action:
+                  - codepipeline:CreatePipeline
+                  - codepipeline:UpdatePipeline
+                  - codepipeline:DeletePipeline
+                  - codepipeline:GetPipeline
+                  - codepipeline:GetPipelineState
+                  - codepipeline:GetPipelineExecution
+                  - codepipeline:TagResource
+                  - codepipeline:UntagResource
+                Resource: !Sub "arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:${CodePipelineName}"
+              - Sid: CodeBuildManagement
+                Effect: Allow
+                Action:
+                  - codebuild:CreateProject
+                  - codebuild:UpdateProject
+                  - codebuild:DeleteProject
+                  - codebuild:BatchGetProjects
+                  - codebuild:TagResource
+                  - codebuild:UntagResource
+                Resource: !Sub "arn:aws:codebuild:${AWS::Region}:${AWS::AccountId}:project/${CodeBuildProjectName}"
+              - Sid: CodeStarConnectionManagement
+                Effect: Allow
+                Action:
+                  - codestar-connections:CreateConnection
+                  - codestar-connections:DeleteConnection
+                  - codestar-connections:GetConnection
+                  - codestar-connections:ListConnections
+                  - codestar-connections:TagResource
+                  - codestar-connections:PassConnection
+                Resource: "*"
+
+
+# ─── CodeBuild Project ────────────────────────────────────────────────────────
+
+  BackendBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Ref CodeBuildProjectName
+      Description: "Packages the Lambda function and validates all CloudFormation templates."
+      ServiceRole: !GetAtt CodeBuildRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:7.0
+        EnvironmentVariables:
+          - Name: LAMBDAS_BUCKET
+            Value: !ImportValue
+              Fn::Sub: "${FoundationStackName}-LambdasBucketName"
+      Source:
+        Type: CODEPIPELINE
+        # BuildSpec stored in buildspec/backend-buildspec.yml in this repo (version-controlled).
+        BuildSpec: buildspec/backend-buildspec.yml
+      LogsConfig:
+        CloudWatchLogs:
+          Status: ENABLED
+          GroupName: !Sub "/aws/codebuild/${CodeBuildProjectName}"
+
+
+# ─── CodePipeline ─────────────────────────────────────────────────────────────
+
+  BackendPipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      Name: !Ref CodePipelineName
+      RoleArn: !GetAtt CodePipelineRole.Arn
+      ArtifactStore:
+        Type: S3
+        Location: !ImportValue
+          Fn::Sub: "${FoundationStackName}-ArtifactsBucketName"
+      Stages:
+
+        - Name: Source
+          Actions:
+            - Name: GitHubSource
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Provider: CodeStarSourceConnection
+                Version: "1"
+              Configuration:
+                ConnectionArn: !Ref GitHubConnection
+                FullRepositoryId: !Sub "${GitHubOwner}/${GitHubRepo}"
+                BranchName: !Ref GitHubBranch
+                OutputArtifactFormat: CODE_ZIP
+              OutputArtifacts:
+                - Name: SourceArtifact
+              RunOrder: 1
+
+        - Name: Build
+          Actions:
+            - Name: BuildAndPackage
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: "1"
+              Configuration:
+                ProjectName: !Ref BackendBuildProject
+              InputArtifacts:
+                - Name: SourceArtifact
+              OutputArtifacts:
+                - Name: BuildArtifact
+              RunOrder: 1
+
+        - Name: Deploy
+          Actions:
+            - Name: DeployFoundation
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CloudFormation
+                Version: "1"
+              Configuration:
+                ActionMode: CREATE_UPDATE
+                StackName: !Ref FoundationStackName
+                TemplatePath: "BuildArtifact::cloudformation/01-foundation.yaml"
+                TemplateConfiguration: "BuildArtifact::config/01-foundation-config.json"
+                Capabilities: CAPABILITY_NAMED_IAM
+                RoleArn: !GetAtt CloudFormationDeployRole.Arn
+              InputArtifacts:
+                - Name: BuildArtifact
+              RunOrder: 1
+
+            - Name: DeployWebsite
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CloudFormation
+                Version: "1"
+              Configuration:
+                ActionMode: CREATE_UPDATE
+                StackName: !Ref BackendStackName
+                TemplatePath: "BuildArtifact::cloudformation/02-website.yaml"
+                TemplateConfiguration: "BuildArtifact::config/02-website-config.json"
+                Capabilities: CAPABILITY_NAMED_IAM
+                RoleArn: !GetAtt CloudFormationDeployRole.Arn
+              InputArtifacts:
+                - Name: BuildArtifact
+              RunOrder: 2
+
+            - Name: DeployCicd
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CloudFormation
+                Version: "1"
+              Configuration:
+                ActionMode: CREATE_UPDATE
+                StackName: !Ref CicdStackName
+                TemplatePath: "BuildArtifact::cloudformation/03-cicd-backend.yaml"
+                TemplateConfiguration: "BuildArtifact::config/03-cicd-config.json"
+                Capabilities: CAPABILITY_NAMED_IAM
+                RoleArn: !GetAtt CloudFormationDeployRole.Arn
+              InputArtifacts:
+                - Name: BuildArtifact
+              RunOrder: 3
+
+
+Outputs:
+
+  PipelineUrl:
+    Description: AWS Console URL for the backend CI/CD pipeline
+    Value: !Sub "https://${AWS::Region}.console.aws.amazon.com/codesuite/codepipeline/pipelines/${BackendPipeline}/view"
+
+  GitHubConnectionArn:
+    Description: |
+      ARN of the GitHub CodeStar Connection.
+      Status starts as Pending — activate it manually in the AWS Console before the pipeline can run.
+    Value: !Ref GitHubConnection

@@ -1,0 +1,39 @@
+version: 0.2
+# Backend build spec for amirghahari-backend-pipeline.
+# Runs in CodeBuild on every push to main.
+# Expects the LAMBDAS_BUCKET environment variable set by the CodeBuild project in 03-cicd-backend.yaml.
+
+phases:
+  install:
+    runtime-versions:
+      python: 3.12
+
+  build:
+    commands:
+      # Package Lambda function
+      - cd lambda/post_contact
+      - zip website_post_contact.zip website_post_contact.py
+      - aws s3 cp website_post_contact.zip s3://${LAMBDAS_BUCKET}/website_post_contact.zip
+      - echo "Lambda ZIP uploaded to s3://${LAMBDAS_BUCKET}/website_post_contact.zip"
+      - cd ../..
+
+      # Generate per-stack TemplateConfiguration JSON files from config/deployment.json
+      - python3 scripts/generate-cfn-configs.py
+
+      # Validate all three CloudFormation templates
+      - aws cloudformation validate-template --template-body file://cloudformation/01-foundation.yaml
+      - aws cloudformation validate-template --template-body file://cloudformation/02-website.yaml
+      - aws cloudformation validate-template --template-body file://cloudformation/03-cicd-backend.yaml
+      - echo "All CloudFormation templates validated successfully"
+
+artifacts:
+  # The Deploy stage in CodePipeline reads all three templates and their config files.
+  files:
+    - cloudformation/01-foundation.yaml
+    - cloudformation/02-website.yaml
+    - cloudformation/03-cicd-backend.yaml
+    - config/01-foundation-config.json
+    - config/02-website-config.json
+    - config/03-cicd-config.json
+  discard-paths: no
+  name: BuildArtifact

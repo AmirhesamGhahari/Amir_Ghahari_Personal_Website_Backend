@@ -1,0 +1,119 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: |
+  Foundation stack for amir-ghahari.dev.
+  Creates shared S3 infrastructure: Lambda code bucket, centralized access logs bucket,
+  and CodePipeline artifacts bucket. Deploy this stack first — other stacks import its exports.
+  All buckets use DeletionPolicy: Retain to protect against accidental stack deletion.
+
+  Note: The static website S3 bucket (amirghahari-website) is managed by the frontend
+  repo's pipeline.yaml stack and is NOT created here. It is referenced by name parameter
+  in 02-website.yaml.
+
+
+Parameters:
+
+  LoggingBucketName:
+    Type: String
+    Default: amirghahari-website-access-logs
+    Description: Name of the S3 bucket for CloudFront and S3 access logs.
+
+  LambdasBucketName:
+    Type: String
+    Default: amir-ghahari-website-lambdas
+    Description: Name of the S3 bucket that stores Lambda deployment ZIPs.
+
+  ArtifactsBucketName:
+    Type: String
+    Default: amir-ghahari-pipeline-artifacts
+    Description: Name of the S3 bucket used by CodePipeline for build artifacts.
+
+
+Resources:
+
+# Logging bucket must exist before other buckets reference it for access logging.
+  WebsiteLoggingBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Ref LoggingBucketName
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerPreferred
+      AccessControl: LogDeliveryWrite
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+
+  WebsiteLoggingBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref WebsiteLoggingBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowCloudFrontAccessLogs
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:PutObject
+            Resource: !Sub "${WebsiteLoggingBucket.Arn}/*"
+            Condition:
+              StringEquals:
+                s3:x-amz-acl: bucket-owner-full-control
+
+  WebsiteLambdasBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Ref LambdasBucketName
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LoggingConfiguration:
+        DestinationBucketName: !Ref WebsiteLoggingBucket
+        LogFilePrefix: website-lambdas/
+
+  PipelineArtifactsBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Ref ArtifactsBucketName
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireOldArtifacts
+            Status: Enabled
+            ExpirationInDays: 30
+
+
+Outputs:
+
+  LambdasBucketName:
+    Description: Name of the Lambda deployment artifacts S3 bucket
+    Value: !Ref WebsiteLambdasBucket
+    Export:
+      Name: !Sub "${AWS::StackName}-LambdasBucketName"
+
+  LoggingBucketName:
+    Description: Name of the centralized access logs S3 bucket
+    Value: !Ref WebsiteLoggingBucket
+    Export:
+      Name: !Sub "${AWS::StackName}-LoggingBucketName"
+
+  ArtifactsBucketName:
+    Description: Name of the CodePipeline artifacts S3 bucket
+    Value: !Ref PipelineArtifactsBucket
+    Export:
+      Name: !Sub "${AWS::StackName}-ArtifactsBucketName"
