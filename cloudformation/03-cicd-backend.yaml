@@ -22,12 +22,12 @@ Parameters:
 
   FoundationStackName:
     Type: String
-    Default: amir-ghahari-foundation
+    Default: amir-ghahari-backend-foundation
     Description: Name of the deployed 01-foundation.yaml stack.
 
   BackendStackName:
     Type: String
-    Default: amir-ghahari-website
+    Default: amir-ghahari-backend-website
     Description: Name of the 02-website.yaml stack that this pipeline will create/update.
 
   CicdStackName:
@@ -37,20 +37,17 @@ Parameters:
 
   StaticBucketName:
     Type: String
-    Default: amirghahari-website
+    Default: amir-ghahari-website-frontend-resourcese
     Description: Name of the existing static website S3 bucket — passed through to 02-website.yaml.
-
-  CloudFrontCertArn:
-    Type: String
-    Description: ACM certificate ARN in us-east-1 for CloudFront — passed through to 02-website.yaml.
 
   GitHubOwner:
     Type: String
-    Default: amirhesamghahari
+    Default: AmirhesamGhahari
     Description: GitHub username or organization that owns the backend repository.
 
   GitHubRepo:
     Type: String
+    Default: Amir_Ghahari_Personal_Website_Backend
     Description: Name of the GitHub repository containing the backend source code (this repo).
 
   GitHubBranch:
@@ -65,12 +62,12 @@ Parameters:
 
   CodeBuildProjectName:
     Type: String
-    Default: amirghahari-backend-build
+    Default: amir-ghahari-backend-build
     Description: Name of the CodeBuild project that packages Lambda and validates templates.
 
   CodePipelineName:
     Type: String
-    Default: amirghahari-backend-pipeline
+    Default: amir-ghahari-backend-pipeline
     Description: Name of the CodePipeline pipeline.
 
   # These parameters mirror the defaults in 02-website.yaml and 01-foundation.yaml.

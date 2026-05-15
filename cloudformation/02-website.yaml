@@ -20,12 +20,12 @@ Parameters:
 
   FoundationStackName:
     Type: String
-    Default: amir-ghahari-foundation
+    Default: amir-ghahari-backend-foundation
     Description: Name of the deployed 01-foundation.yaml stack.
 
   StaticBucketName:
     Type: String
-    Default: amirghahari-website
+    Default: amir-ghahari-website-frontend-resources
     Description: |
       Name of the existing static website S3 bucket (managed by the frontend repo's pipeline.yaml).
       This stack creates the CloudFront OAC bucket policy for this bucket — the frontend stack
@@ -33,8 +33,9 @@ Parameters:
 
   CloudFrontCertArn:
     Type: String
+    Default: arn:aws:acm:us-east-1:794038223644:certificate/85ec7fe5-560f-473c-a190-cdfe1b58603a
     Description: |
-      ARN of an ACM certificate in us-east-1 covering the CloudFront alias domain (test.amir-ghahari.dev).
+      ARN of an ACM certificate in us-east-1 covering the CloudFront alias domain (amir-ghahari.dev).
       Example: arn:aws:acm:us-east-1:123456789012:certificate/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
 
   ContactTableName:
@@ -54,8 +55,8 @@ Parameters:
 
   CloudFrontAlias:
     Type: String
-    Default: test.amir-ghahari.dev
-    Description: Domain alias for the CloudFront distribution (e.g. test.amir-ghahari.dev or amir-ghahari.dev).
+    Default: amir-ghahari.dev
+    Description: Domain alias for the CloudFront distribution (e.g. amir-ghahari.dev or amir-ghahari.dev).
 
   RootDomain:
     Type: String
@@ -94,7 +95,7 @@ Parameters:
 
   ApiName:
     Type: String
-    Default: amirghahari-website-api
+    Default: amir-ghahari-website-api
     Description: Name of the API Gateway REST API.
 
   ApiStageName:
