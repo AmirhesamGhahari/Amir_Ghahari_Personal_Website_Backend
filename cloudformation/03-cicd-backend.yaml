@@ -37,7 +37,7 @@ Parameters:
 
   StaticBucketName:
     Type: String
-    Default: amir-ghahari-website-frontend-resourcese
+    Default: amir-ghahari-website-frontend-resources
     Description: Name of the existing static website S3 bucket — passed through to 02-website.yaml.
 
   GitHubOwner:
@@ -445,6 +445,16 @@ Resources:
                   - codestar-connections:TagResource
                   - codestar-connections:PassConnection
                 Resource: "*"
+              - Sid: CloudFormationReadAccess
+                Effect: Allow
+                Action:
+                  - cloudformation:DescribeStacks
+                  - cloudformation:DescribeStackEvents
+                  - cloudformation:DescribeStackResource
+                  - cloudformation:DescribeStackResources
+                  - cloudformation:GetTemplate
+                  - cloudformation:ListStackResources
+                Resource: "*"
 
 
 # ─── CodeBuild Project ────────────────────────────────────────────────────────
@@ -536,6 +546,12 @@ Resources:
                 TemplateConfiguration: "BuildArtifact::config/01-foundation-config.json"
                 Capabilities: CAPABILITY_NAMED_IAM
                 RoleArn: !GetAtt CloudFormationDeployRole.Arn
+                ParameterOverrides: !Sub |
+                  {
+                    "LoggingBucketName": "${LoggingBucketName}",
+                    "LambdasBucketName": "${LambdasBucketName}",
+                    "ArtifactsBucketName": "${ArtifactsBucketName}"
+                  }
               InputArtifacts:
                 - Name: BuildArtifact
               RunOrder: 1
@@ -553,6 +569,25 @@ Resources:
                 TemplateConfiguration: "BuildArtifact::config/02-website-config.json"
                 Capabilities: CAPABILITY_NAMED_IAM
                 RoleArn: !GetAtt CloudFormationDeployRole.Arn
+                ParameterOverrides: !Sub |
+                  {
+                    "FoundationStackName": "${FoundationStackName}",
+                    "StaticBucketName": "${StaticBucketName}",
+                    "CloudFrontCertArn": "${CloudFrontCertArn}",
+                    "ContactTableName": "${ContactTableName}",
+                    "ContactSNSTopicName": "${ContactSNSTopicName}",
+                    "LambdaFunctionName": "${LambdaFunctionName}",
+                    "LambdaRoleName": "${LambdaRoleName}",
+                    "ApiGatewayRoleName": "${ApiGatewayRoleName}",
+                    "ApiName": "${ApiName}",
+                    "ApiStageName": "${ApiStageName}",
+                    "HostedZoneId": "${HostedZoneId}",
+                    "CloudFrontAlias": "${CloudFrontAlias}",
+                    "RootDomain": "${RootDomain}",
+                    "ApiDomain": "${ApiDomain}",
+                    "NotificationEmail": "${NotificationEmail}",
+                    "LambdaS3Key": "${LambdaS3Key}"
+                  }
               InputArtifacts:
                 - Name: BuildArtifact
               RunOrder: 2
@@ -570,6 +605,28 @@ Resources:
                 TemplateConfiguration: "BuildArtifact::config/03-cicd-config.json"
                 Capabilities: CAPABILITY_NAMED_IAM
                 RoleArn: !GetAtt CloudFormationDeployRole.Arn
+                ParameterOverrides: !Sub |
+                  {
+                    "FoundationStackName": "${FoundationStackName}",
+                    "BackendStackName": "${BackendStackName}",
+                    "CicdStackName": "${CicdStackName}",
+                    "StaticBucketName": "${StaticBucketName}",
+                    "GitHubOwner": "${GitHubOwner}",
+                    "GitHubRepo": "${GitHubRepo}",
+                    "GitHubBranch": "${GitHubBranch}",
+                    "GitHubConnectionName": "${GitHubConnectionName}",
+                    "CodeBuildProjectName": "${CodeBuildProjectName}",
+                    "CodePipelineName": "${CodePipelineName}",
+                    "ContactTableName": "${ContactTableName}",
+                    "ContactSNSTopicName": "${ContactSNSTopicName}",
+                    "LambdaFunctionName": "${LambdaFunctionName}",
+                    "LambdaRoleName": "${LambdaRoleName}",
+                    "ApiGatewayRoleName": "${ApiGatewayRoleName}",
+                    "HostedZoneId": "${HostedZoneId}",
+                    "LoggingBucketName": "${LoggingBucketName}",
+                    "LambdasBucketName": "${LambdasBucketName}",
+                    "ArtifactsBucketName": "${ArtifactsBucketName}"
+                  }
               InputArtifacts:
                 - Name: BuildArtifact
               RunOrder: 3
