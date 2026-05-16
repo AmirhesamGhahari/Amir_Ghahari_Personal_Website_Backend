@@ -24,7 +24,7 @@ Parameters:
 
   ArtifactsBucketName:
     Type: String
-    Default: amir-ghahari-backend-pipeline-artifacts
+    Default: amir-ghahari-pipeline-artifacts
     Description: Name of the S3 bucket used by CodePipeline for build artifacts.
 
 
@@ -41,6 +41,11 @@ Resources:
         Rules:
           - ObjectOwnership: BucketOwnerPreferred
       AccessControl: LogDeliveryWrite
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
       BucketEncryption:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:

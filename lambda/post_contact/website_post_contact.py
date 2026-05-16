@@ -17,6 +17,7 @@ TOPIC_ARN = os.environ["TOPIC_ARN"]
 
 table = dynamodb.Table(TABLE_NAME)
 EMAIL_REGEX = r"^[^@]+@[^@]+\.[^@]+$"
+FIELD_MAX_LENGTHS = {"name": 100, "email": 254, "subject": 200, "message": 5000}
 
 
 def is_valid_email(email: str) -> bool:
@@ -50,6 +51,11 @@ def lambda_handler(event, context):
         if not name or not email or not subject or not message:
             logger.info("Rejected: missing required field(s)")
             return response(400, {"error": "All fields are required"})
+
+        for field, value in [("name", name), ("email", email), ("subject", subject), ("message", message)]:
+            if len(value) > FIELD_MAX_LENGTHS[field]:
+                logger.info("Rejected: %s exceeds max length", field)
+                return response(400, {"error": f"{field} is too long"})
 
         if not is_valid_email(email):
             logger.info("Rejected: invalid email address")
