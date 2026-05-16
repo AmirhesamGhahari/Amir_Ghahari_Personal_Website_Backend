@@ -569,25 +569,6 @@ Resources:
                 TemplateConfiguration: "BuildArtifact::config/02-website-config.json"
                 Capabilities: CAPABILITY_NAMED_IAM
                 RoleArn: !GetAtt CloudFormationDeployRole.Arn
-                ParameterOverrides: !Sub |
-                  {
-                    "FoundationStackName": "${FoundationStackName}",
-                    "StaticBucketName": "${StaticBucketName}",
-                    "CloudFrontCertArn": "${CloudFrontCertArn}",
-                    "ContactTableName": "${ContactTableName}",
-                    "ContactSNSTopicName": "${ContactSNSTopicName}",
-                    "LambdaFunctionName": "${LambdaFunctionName}",
-                    "LambdaRoleName": "${LambdaRoleName}",
-                    "ApiGatewayRoleName": "${ApiGatewayRoleName}",
-                    "ApiName": "${ApiName}",
-                    "ApiStageName": "${ApiStageName}",
-                    "HostedZoneId": "${HostedZoneId}",
-                    "CloudFrontAlias": "${CloudFrontAlias}",
-                    "RootDomain": "${RootDomain}",
-                    "ApiDomain": "${ApiDomain}",
-                    "NotificationEmail": "${NotificationEmail}",
-                    "LambdaS3Key": "${LambdaS3Key}"
-                  }
               InputArtifacts:
                 - Name: BuildArtifact
               RunOrder: 2
