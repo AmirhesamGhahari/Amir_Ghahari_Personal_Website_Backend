@@ -576,20 +576,12 @@ Resources:
                     "FoundationStackName": "${FoundationStackName}",
                     "BackendStackName": "${BackendStackName}",
                     "StaticBucketName": "${StaticBucketName}",
-                    "CloudFrontCertArn": "${CloudFrontCertArn}",
                     "ContactTableName": "${ContactTableName}",
                     "ContactSNSTopicName": "${ContactSNSTopicName}",
                     "HostedZoneId": "${HostedZoneId}",
-                    "CloudFrontAlias": "${CloudFrontAlias}",
-                    "RootDomain": "${RootDomain}",
-                    "ApiDomain": "${ApiDomain}",
-                    "NotificationEmail": "${NotificationEmail}",
                     "LambdaFunctionName": "${LambdaFunctionName}",
                     "LambdaRoleName": "${LambdaRoleName}",
-                    "LambdaS3Key": "${LambdaS3Key}",
-                    "ApiGatewayRoleName": "${ApiGatewayRoleName}",
-                    "ApiName": "${ApiName}",
-                    "ApiStageName": "${ApiStageName}"
+                    "ApiGatewayRoleName": "${ApiGatewayRoleName}"
                   }
               InputArtifacts:
                 - Name: BuildArtifact
