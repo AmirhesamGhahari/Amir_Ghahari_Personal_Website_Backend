@@ -192,6 +192,7 @@ Resources:
                   - s3:GetObjectVersion
                   - s3:GetBucketVersioning
                   - s3:ListBucket
+                  - s3:GetBucketLocation
                 Resource:
                   - !Sub
                     - "arn:aws:s3:::${ArtifactsBucket}"
