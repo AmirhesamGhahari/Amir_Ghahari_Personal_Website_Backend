@@ -71,8 +71,8 @@ Parameters:
     Default: amir-ghahari-backend-pipeline
     Description: Name of the CodePipeline pipeline.
 
-  # These parameters mirror the defaults in 02-website.yaml and 01-foundation.yaml.
-  # They are used to scope IAM policies in CloudFormationDeployRole.
+  # These parameters mirror the defaults in 02-website.yaml and 01-foundation.yaml (except
+  # ArtifactsBucketName, which is owned by this stack). Used to scope IAM policies.
   ContactTableName:
     Type: String
     Default: amirghahari-website-contacts-table
@@ -102,7 +102,7 @@ Parameters:
   ArtifactsBucketName:
     Type: String
     Default: amir-ghahari-pipeline-artifacts
-    Description: Foundation artifacts bucket name — used to scope S3 management permissions.
+    Description: Name of the CodePipeline artifacts bucket — owned and created by this stack.
 
 
 Resources:
@@ -114,6 +114,27 @@ Resources:
     Properties:
       ConnectionName: !Ref GitHubConnectionName
       ProviderType: GitHub
+
+
+# ─── Artifacts Bucket ────────────────────────────────────────────────────────
+
+  PipelineArtifactsBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Ref ArtifactsBucketName
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireOldArtifacts
+            Status: Enabled
+            ExpirationInDays: 30
 
 
 # ─── IAM Roles ───────────────────────────────────────────────────────────────
@@ -157,10 +178,7 @@ Resources:
                   - s3:GetObject
                   - s3:PutObject
                   - s3:GetObjectVersion
-                Resource: !Sub
-                  - "arn:aws:s3:::${ArtifactsBucket}/*"
-                  - ArtifactsBucket: !ImportValue
-                      Fn::Sub: "${FoundationStackName}-ArtifactsBucketName"
+                Resource: !Sub "arn:aws:s3:::${ArtifactsBucketName}/*"
               - Sid: ValidateCloudFormation
                 Effect: Allow
                 Action:
@@ -228,14 +246,8 @@ Resources:
                   - s3:ListBucket
                   - s3:GetBucketLocation
                 Resource:
-                  - !Sub
-                    - "arn:aws:s3:::${ArtifactsBucket}"
-                    - ArtifactsBucket: !ImportValue
-                        Fn::Sub: "${FoundationStackName}-ArtifactsBucketName"
-                  - !Sub
-                    - "arn:aws:s3:::${ArtifactsBucket}/*"
-                    - ArtifactsBucket: !ImportValue
-                        Fn::Sub: "${FoundationStackName}-ArtifactsBucketName"
+                  - !Sub "arn:aws:s3:::${ArtifactsBucketName}"
+                  - !Sub "arn:aws:s3:::${ArtifactsBucketName}/*"
               - Sid: CodeBuildAccess
                 Effect: Allow
                 Action:
@@ -437,10 +449,7 @@ Resources:
                 Action:
                   - s3:GetObject
                   - s3:GetObjectVersion
-                Resource: !Sub
-                  - "arn:aws:s3:::${ArtifactsBucket}/*"
-                  - ArtifactsBucket: !ImportValue
-                      Fn::Sub: "${FoundationStackName}-ArtifactsBucketName"
+                Resource: !Sub "arn:aws:s3:::${ArtifactsBucketName}/*"
               - Sid: LambdasBucketRead
                 Effect: Allow
                 Action:
@@ -531,8 +540,7 @@ Resources:
       RoleArn: !GetAtt CodePipelineRole.Arn
       ArtifactStore:
         Type: S3
-        Location: !ImportValue
-          Fn::Sub: "${FoundationStackName}-ArtifactsBucketName"
+        Location: !Ref PipelineArtifactsBucket
       Stages:
 
         - Name: Source

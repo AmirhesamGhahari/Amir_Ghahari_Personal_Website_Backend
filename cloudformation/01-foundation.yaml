@@ -1,9 +1,10 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: |
   Foundation stack for amir-ghahari.dev.
-  Creates shared S3 infrastructure: Lambda code bucket, centralized access logs bucket,
-  and CodePipeline artifacts bucket. Deploy this stack first — other stacks import its exports.
+  Creates shared S3 infrastructure: Lambda code bucket and centralized access logs bucket.
+  Deploy this stack first — other stacks import its exports.
   All buckets use DeletionPolicy: Retain to protect against accidental stack deletion.
+  Note: The CodePipeline artifacts bucket is owned by 03-cicd-backend.yaml, not this stack.
 
   Note: The static website S3 bucket (amirghahari-website) is managed by the frontend
   repo's pipeline.yaml stack and is NOT created here. It is referenced by name parameter
@@ -21,12 +22,6 @@ Parameters:
     Type: String
     Default: amir-ghahari-website-lambdas
     Description: Name of the S3 bucket that stores Lambda deployment ZIPs.
-
-  ArtifactsBucketName:
-    Type: String
-    Default: amir-ghahari-pipeline-artifacts
-    Description: Name of the S3 bucket used by CodePipeline for build artifacts.
-
 
 Resources:
 
@@ -84,25 +79,6 @@ Resources:
         DestinationBucketName: !Ref WebsiteLoggingBucket
         LogFilePrefix: website-lambdas/
 
-  PipelineArtifactsBucket:
-    Type: AWS::S3::Bucket
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
-    Properties:
-      BucketName: !Ref ArtifactsBucketName
-      VersioningConfiguration:
-        Status: Enabled
-      BucketEncryption:
-        ServerSideEncryptionConfiguration:
-          - ServerSideEncryptionByDefault:
-              SSEAlgorithm: AES256
-      LifecycleConfiguration:
-        Rules:
-          - Id: ExpireOldArtifacts
-            Status: Enabled
-            ExpirationInDays: 30
-
-
 Outputs:
 
   LambdasBucketName:
@@ -117,8 +93,3 @@ Outputs:
     Export:
       Name: !Sub "${AWS::StackName}-LoggingBucketName"
 
-  ArtifactsBucketName:
-    Description: Name of the CodePipeline artifacts S3 bucket
-    Value: !Ref PipelineArtifactsBucket
-    Export:
-      Name: !Sub "${AWS::StackName}-ArtifactsBucketName"
