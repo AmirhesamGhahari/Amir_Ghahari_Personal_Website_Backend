@@ -292,215 +292,8 @@ Resources:
             Principal:
               Service: cloudformation.amazonaws.com
             Action: sts:AssumeRole
-      Policies:
-        - PolicyName: BackendDeployPolicy
-          PolicyDocument:
-            Version: "2012-10-17"
-            Statement:
-              - Sid: CloudFrontAccess
-                Effect: Allow
-                Action:
-                  - cloudfront:CreateDistribution
-                  - cloudfront:UpdateDistribution
-                  - cloudfront:DeleteDistribution
-                  - cloudfront:GetDistribution
-                  - cloudfront:GetDistributionConfig
-                  - cloudfront:TagResource
-                  - cloudfront:CreateOriginAccessControl
-                  - cloudfront:UpdateOriginAccessControl
-                  - cloudfront:DeleteOriginAccessControl
-                  - cloudfront:GetOriginAccessControl
-                Resource: "*"
-              - Sid: S3BucketPolicyAccess
-                Effect: Allow
-                Action:
-                  - s3:GetBucketPolicy
-                  - s3:PutBucketPolicy
-                  - s3:DeleteBucketPolicy
-                Resource: !Sub "arn:aws:s3:::${StaticBucketName}"
-              - Sid: FoundationS3Management
-                Effect: Allow
-                Action:
-                  - s3:CreateBucket
-                  - s3:DeleteBucket
-                  - s3:PutBucketVersioning
-                  - s3:GetBucketVersioning
-                  - s3:PutEncryptionConfiguration
-                  - s3:GetEncryptionConfiguration
-                  - s3:PutBucketLogging
-                  - s3:GetBucketLogging
-                  - s3:PutLifecycleConfiguration
-                  - s3:GetLifecycleConfiguration
-                  - s3:PutBucketOwnershipControls
-                  - s3:GetBucketOwnershipControls
-                  - s3:PutBucketAcl
-                  - s3:GetBucketAcl
-                  - s3:GetBucketPolicy
-                  - s3:PutBucketPolicy
-                  - s3:DeleteBucketPolicy
-                Resource:
-                  - !Sub "arn:aws:s3:::${LoggingBucketName}"
-                  - !Sub "arn:aws:s3:::${LambdasBucketName}"
-                  - !Sub "arn:aws:s3:::${ArtifactsBucketName}"
-              - Sid: DynamoDBAccess
-                Effect: Allow
-                Action:
-                  - dynamodb:CreateTable
-                  - dynamodb:DescribeTable
-                  - dynamodb:UpdateTable
-                  - dynamodb:DeleteTable
-                  - dynamodb:TagResource
-                  - dynamodb:UntagResource
-                Resource: !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${ContactTableName}"
-              - Sid: SNSAccess
-                Effect: Allow
-                Action:
-                  - sns:CreateTopic
-                  - sns:DeleteTopic
-                  - sns:Subscribe
-                  - sns:Unsubscribe
-                  - sns:SetTopicAttributes
-                  - sns:GetTopicAttributes
-                  - sns:ListSubscriptionsByTopic
-                  - sns:SetSubscriptionAttributes
-                  - sns:TagResource
-                Resource: !Sub "arn:aws:sns:${AWS::Region}:${AWS::AccountId}:${ContactSNSTopicName}"
-              - Sid: LambdaAccess
-                Effect: Allow
-                Action:
-                  - lambda:CreateFunction
-                  - lambda:UpdateFunctionCode
-                  - lambda:UpdateFunctionConfiguration
-                  - lambda:DeleteFunction
-                  - lambda:GetFunction
-                  - lambda:AddPermission
-                  - lambda:RemovePermission
-                  - lambda:GetPolicy
-                  - lambda:TagResource
-                  - lambda:ListTags
-                  - lambda:PutFunctionConcurrency
-                Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${LambdaFunctionName}"
-              - Sid: IAMRoleAccess
-                Effect: Allow
-                Action:
-                  - iam:CreateRole
-                  - iam:DeleteRole
-                  - iam:AttachRolePolicy
-                  - iam:DetachRolePolicy
-                  - iam:PutRolePolicy
-                  - iam:DeleteRolePolicy
-                  - iam:GetRole
-                  - iam:GetRolePolicy
-                  - iam:PassRole
-                  - iam:TagRole
-                  - iam:UntagRole
-                  - iam:ListRolePolicies
-                  - iam:ListAttachedRolePolicies
-                Resource:
-                  - !Sub "arn:aws:iam::${AWS::AccountId}:role/${LambdaRoleName}"
-                  - !Sub "arn:aws:iam::${AWS::AccountId}:role/${ApiGatewayRoleName}"
-                  - !Sub "arn:aws:iam::${AWS::AccountId}:role/amirghahari-backend-codebuild-role"
-                  - !Sub "arn:aws:iam::${AWS::AccountId}:role/amirghahari-backend-codepipeline-role"
-                  - !Sub "arn:aws:iam::${AWS::AccountId}:role/amirghahari-backend-cfn-deploy-role"
-              - Sid: APIGatewayAccess
-                Effect: Allow
-                Action:
-                  - apigateway:GET
-                  - apigateway:POST
-                  - apigateway:PUT
-                  - apigateway:PATCH
-                  - apigateway:DELETE
-                Resource:
-                  - !Sub "arn:aws:apigateway:${AWS::Region}::/restapis"
-                  - !Sub "arn:aws:apigateway:${AWS::Region}::/restapis/*"
-                  - !Sub "arn:aws:apigateway:${AWS::Region}::/account"
-                  - !Sub "arn:aws:apigateway:${AWS::Region}::/domainnames"
-                  - !Sub "arn:aws:apigateway:${AWS::Region}::/domainnames/*"
-              - Sid: CloudWatchLogsAccess
-                Effect: Allow
-                Action:
-                  - logs:CreateLogGroup
-                  - logs:DeleteLogGroup
-                  - logs:PutRetentionPolicy
-                  - logs:DescribeLogGroups
-                  - logs:TagResource
-                  - logs:UntagResource
-                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws*"
-              - Sid: ACMAccess
-                Effect: Allow
-                Action:
-                  - acm:RequestCertificate
-                  - acm:DescribeCertificate
-                  - acm:DeleteCertificate
-                  - acm:AddTagsToCertificate
-                  - acm:ListTagsForCertificate
-                Resource: "*"
-              - Sid: Route53Access
-                Effect: Allow
-                Action:
-                  - route53:ChangeResourceRecordSets
-                  - route53:GetChange
-                  - route53:ListResourceRecordSets
-                Resource:
-                  - !Sub "arn:aws:route53:::hostedzone/${HostedZoneId}"
-                  - "arn:aws:route53:::change/*"
-              - Sid: ArtifactsBucketRead
-                Effect: Allow
-                Action:
-                  - s3:GetObject
-                  - s3:GetObjectVersion
-                Resource: !Sub "arn:aws:s3:::${ArtifactsBucketName}/*"
-              - Sid: LambdasBucketRead
-                Effect: Allow
-                Action:
-                  - s3:GetObject
-                  - s3:GetObjectVersion
-                Resource: !Sub
-                  - "arn:aws:s3:::${LambdasBucket}/*"
-                  - LambdasBucket: !ImportValue
-                      Fn::Sub: "${FoundationStackName}-LambdasBucketName"
-              - Sid: CodePipelineManagement
-                Effect: Allow
-                Action:
-                  - codepipeline:CreatePipeline
-                  - codepipeline:UpdatePipeline
-                  - codepipeline:DeletePipeline
-                  - codepipeline:GetPipeline
-                  - codepipeline:GetPipelineState
-                  - codepipeline:GetPipelineExecution
-                  - codepipeline:TagResource
-                  - codepipeline:UntagResource
-                Resource: !Sub "arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:${CodePipelineName}"
-              - Sid: CodeBuildManagement
-                Effect: Allow
-                Action:
-                  - codebuild:CreateProject
-                  - codebuild:UpdateProject
-                  - codebuild:DeleteProject
-                  - codebuild:BatchGetProjects
-                  - codebuild:TagResource
-                  - codebuild:UntagResource
-                Resource: !Sub "arn:aws:codebuild:${AWS::Region}:${AWS::AccountId}:project/${CodeBuildProjectName}"
-              - Sid: CodeStarConnectionManagement
-                Effect: Allow
-                Action:
-                  - codestar-connections:CreateConnection
-                  - codestar-connections:DeleteConnection
-                  - codestar-connections:GetConnection
-                  - codestar-connections:ListConnections
-                  - codestar-connections:TagResource
-                  - codestar-connections:PassConnection
-                Resource: "*"
-              - Sid: CloudFormationReadAccess
-                Effect: Allow
-                Action:
-                  - cloudformation:DescribeStacks
-                  - cloudformation:DescribeStackEvents
-                  - cloudformation:DescribeStackResource
-                  - cloudformation:DescribeStackResources
-                  - cloudformation:GetTemplate
-                  - cloudformation:ListStackResources
-                Resource: "*"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AdministratorAccess
 
 
 # ─── CodeBuild Project ────────────────────────────────────────────────────────
@@ -588,14 +381,12 @@ Resources:
                 ActionMode: CREATE_UPDATE
                 StackName: !Ref FoundationStackName
                 TemplatePath: "BuildArtifact::cloudformation/01-foundation.yaml"
-                TemplateConfiguration: "BuildArtifact::config/01-foundation-config.json"
                 Capabilities: CAPABILITY_NAMED_IAM
                 RoleArn: !GetAtt CloudFormationDeployRole.Arn
                 ParameterOverrides: !Sub |
                   {
                     "LoggingBucketName": "${LoggingBucketName}",
-                    "LambdasBucketName": "${LambdasBucketName}",
-                    "ArtifactsBucketName": "${ArtifactsBucketName}"
+                    "LambdasBucketName": "${LambdasBucketName}"
                   }
               InputArtifacts:
                 - Name: BuildArtifact
@@ -611,7 +402,6 @@ Resources:
                 ActionMode: CREATE_UPDATE
                 StackName: !Ref BackendStackName
                 TemplatePath: "BuildArtifact::cloudformation/02-website.yaml"
-                TemplateConfiguration: "BuildArtifact::config/02-website-config.json"
                 Capabilities: CAPABILITY_NAMED_IAM
                 RoleArn: !GetAtt CloudFormationDeployRole.Arn
                 ParameterOverrides: !Sub |
@@ -640,7 +430,6 @@ Resources:
                 ActionMode: CREATE_UPDATE
                 StackName: !Ref CicdStackName
                 TemplatePath: "BuildArtifact::cloudformation/03-cicd-backend.yaml"
-                TemplateConfiguration: "BuildArtifact::config/03-cicd-config.json"
                 Capabilities: CAPABILITY_NAMED_IAM
                 RoleArn: !GetAtt CloudFormationDeployRole.Arn
                 ParameterOverrides: !Sub |
