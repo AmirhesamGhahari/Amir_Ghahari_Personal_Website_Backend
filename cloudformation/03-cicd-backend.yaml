@@ -168,6 +168,41 @@ Resources:
                   - cloudformation:ValidateTemplate
                 Resource: "*"
 
+  # Bucket policy is required because CodePipeline passes an internally-scoped session policy
+  # when running. IAM role-level permissions alone are insufficient; an explicit resource-based
+  # policy using the IAM role ARN (not the session ARN) bypasses the session policy restriction.
+  ArtifactsBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref ArtifactsBucketName
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowCodePipelineAccess
+            Effect: Allow
+            Principal:
+              AWS: !GetAtt CodePipelineRole.Arn
+            Action:
+              - s3:GetObject
+              - s3:PutObject
+              - s3:GetObjectVersion
+              - s3:GetBucketVersioning
+              - s3:ListBucket
+              - s3:GetBucketLocation
+            Resource:
+              - !Sub "arn:aws:s3:::${ArtifactsBucketName}"
+              - !Sub "arn:aws:s3:::${ArtifactsBucketName}/*"
+          - Sid: AllowCodeBuildAccess
+            Effect: Allow
+            Principal:
+              AWS: !GetAtt CodeBuildRole.Arn
+            Action:
+              - s3:GetObject
+              - s3:PutObject
+              - s3:GetObjectVersion
+            Resource:
+              - !Sub "arn:aws:s3:::${ArtifactsBucketName}/*"
+
   CodePipelineRole:
     Type: AWS::IAM::Role
     Properties:
