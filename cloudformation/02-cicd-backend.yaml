@@ -52,8 +52,6 @@ Parameters:
     Default: amirghahari-github-connection
     Description: Name of the CodeStar Connection to GitHub.
 
-  # These parameters mirror the defaults in 01-website.yaml. Used to pass values to the
-  # website deploy action and to configure the CodeBuild environment.
   ContactTableName:
     Type: String
     Default: amirghahari-website-contacts-table
