@@ -230,6 +230,7 @@ Resources:
                 ActionMode: CREATE_UPDATE
                 StackName: !Ref BackendStackName
                 TemplatePath: "BuildArtifact::cloudformation/01-website.yaml"
+                TemplateConfiguration: 'BuildArtifact::cloudformation/stack-tags.json'
                 Capabilities: CAPABILITY_NAMED_IAM
                 RoleArn: !GetAtt CloudFormationDeployRole.Arn
                 ParameterOverrides: !Sub |
@@ -255,6 +256,7 @@ Resources:
                 ActionMode: CREATE_UPDATE
                 StackName: !Ref CicdStackName
                 TemplatePath: "BuildArtifact::cloudformation/02-cicd-backend.yaml"
+                TemplateConfiguration: 'BuildArtifact::cloudformation/stack-tags.json'
                 Capabilities: CAPABILITY_NAMED_IAM
                 RoleArn: !GetAtt CloudFormationDeployRole.Arn
                 ParameterOverrides: !Sub |
