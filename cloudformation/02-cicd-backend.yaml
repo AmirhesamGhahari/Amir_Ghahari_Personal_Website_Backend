@@ -241,8 +241,8 @@ Resources:
                     "LambdasBucketName": "${LambdasBucketName}"
                   }
               InputArtifacts:
-                - Name: BuildArtifact
-              RunOrder: 1
+                - Name: SourceArtifact
+              RunOrder: 2
 
             - Name: DeployCicd
               ActionTypeId:
@@ -273,8 +273,8 @@ Resources:
                     "ArtifactsBucketName": "${ArtifactsBucketName}"
                   }
               InputArtifacts:
-                - Name: BuildArtifact
-              RunOrder: 2
+                - Name: SourceArtifact
+              RunOrder: 1
 
       Tags:
         - Key: app
