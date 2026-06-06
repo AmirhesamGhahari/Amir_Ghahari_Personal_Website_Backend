@@ -1,0 +1,28 @@
+{
+  "website": {
+    "StackName": "amirghahari-website-backend",
+    "LoggingBucketName": "amirghahari-website-access-loggings",
+    "LambdasBucketName": "amirghahari-website-lambdas",
+    "StaticBucketName": "amirghahari-website-frontend-contexts",
+    "CloudFrontCertArn": "arn:aws:acm:us-east-1:794038223644:certificate/85ec7fe5-560f-473c-a190-cdfe1b58603a",
+    "HostedZoneId": "Z068537516QXV7OMQVCH1",
+    "CloudFrontAlias": "amir-ghahari.dev",
+    "RootDomain": "amir-ghahari.dev",
+    "ApiDomain": "api.amir-ghahari.dev",
+    "NotificationEmail": "ahesam.ghahari@gmail.com",
+    "ContactTableName": "amirghahari-website-contacts-table",
+    "ContactSNSTopicName": "amirghahari-website-contacts-topic",
+    "LambdaS3Key": "website_post_contact.zip",
+    "ApiStageName": "prod"
+  },
+  "cicd": {
+    "StackName": "amirghahari-backend-cicd",
+    "BackendStackName": "amir-ghahari-backend-website",
+    "GitHubOwner": "AmirhesamGhahari",
+    "StaticBucketName": "amirghahari-website-frontend-contexts",
+    "GitHubRepo": "Amir_Ghahari_Personal_Website_Backend",
+    "GitHubBranch": "main",
+    "GitHubConnectionName": "amirghahari-github-connection",
+    "ArtifactsBucketName": "amirghahari-backend-pipeline-artifacts"
+  }
+}

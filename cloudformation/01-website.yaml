@@ -1,12 +1,11 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: |
   Website stack for amir-ghahari.dev.
-  Combines static site hosting (CloudFront) and the backend API (Lambda, API Gateway,
-  DynamoDB, SNS) into a single deployable unit. This stack is updated automatically by
-  the backend CodePipeline (03-cicd-backend.yaml) on every push to main.
+  Combines static site hosting (CloudFront), shared S3 infrastructure (logging + Lambda code buckets),
+  and the backend API (Lambda, API Gateway, DynamoDB, SNS) into a single deployable unit.
+  This stack is updated automatically by the backend CodePipeline (02-cicd-backend.yaml) on every push to main.
 
   Prerequisites:
-    - 01-foundation.yaml deployed (FoundationStackName parameter must match)
     - The static S3 bucket (StaticBucketName) already exists — managed by the frontend repo.
       Before deploying this stack, the frontend pipeline.yaml must have its WebsiteBucketPolicy
       resource and public access overrides removed (this stack takes ownership of the bucket policy).
@@ -18,18 +17,20 @@ Description: |
 
 Parameters:
 
-  FoundationStackName:
+  LoggingBucketName:
     Type: String
-    Default: amir-ghahari-backend-foundation
-    Description: Name of the deployed 01-foundation.yaml stack.
+    Default: amirghahari-website-access-loggings
+    Description: S3 bucket for CloudFront and Lambda access logs.
+
+  LambdasBucketName:
+    Type: String
+    Default: amirghahari-website-lambdas
+    Description: S3 bucket that stores Lambda deployment ZIPs.
 
   StaticBucketName:
     Type: String
-    Default: amir-ghahari-website-frontend-resources
-    Description: |
-      Name of the existing static website S3 bucket (managed by the frontend repo's pipeline.yaml).
-      This stack creates the CloudFront OAC bucket policy for this bucket — the frontend stack
-      must no longer have a WebsiteBucketPolicy resource for the same bucket.
+    Default: amirghahari-website-frontend-contexts
+    Description: Name of the existing static website S3 bucket
 
   CloudFrontCertArn:
     Type: String
@@ -56,7 +57,7 @@ Parameters:
   CloudFrontAlias:
     Type: String
     Default: amir-ghahari.dev
-    Description: Domain alias for the CloudFront distribution (e.g. amir-ghahari.dev or amir-ghahari.dev).
+    Description: Domain alias for the CloudFront distribution.
 
   RootDomain:
     Type: String
@@ -73,38 +74,59 @@ Parameters:
     Default: ahesam.ghahari@gmail.com
     Description: Email address that receives SNS notifications on new contact form submissions.
 
-  LambdaFunctionName:
-    Type: String
-    Default: amirghahari-website-contact
-    Description: Name of the Lambda function that handles contact form submissions.
-
-  LambdaRoleName:
-    Type: String
-    Default: amirghahari-website-contact-lambda-role
-    Description: IAM role name for the contact form Lambda function.
-
   LambdaS3Key:
     Type: String
     Default: website_post_contact.zip
-    Description: S3 key (filename) of the Lambda deployment ZIP in the foundation lambdas bucket.
-
-  ApiGatewayRoleName:
-    Type: String
-    Default: amirghahari-api-gateway-cloudwatch-role
-    Description: IAM role name that grants API Gateway permission to write CloudWatch logs.
-
-  ApiName:
-    Type: String
-    Default: amir-ghahari-website-api
-    Description: Name of the API Gateway REST API.
+    Description: S3 key (filename) of the Lambda deployment ZIP in the lambdas bucket.
 
   ApiStageName:
     Type: String
     Default: prod
-    Description: API Gateway stage name (e.g. prod, staging).
+
 
 
 Resources:
+
+# ─── Logging + Lambda Buckets ────────────────────────────────────────────────
+
+  WebsiteLoggingBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref LoggingBucketName
+      VersioningConfiguration:
+        Status: Enabled
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerPreferred
+      AccessControl: LogDeliveryWrite
+
+  WebsiteLoggingBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref WebsiteLoggingBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowCloudFrontAccessLogs
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:PutObject
+            Resource: !Sub "${WebsiteLoggingBucket.Arn}/*"
+            Condition:
+              StringEquals:
+                s3:x-amz-acl: bucket-owner-full-control
+
+  WebsiteLambdasBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref LambdasBucketName
+      VersioningConfiguration:
+        Status: Enabled
+      LoggingConfiguration:
+        DestinationBucketName: !Ref WebsiteLoggingBucket
+        LogFilePrefix: website-lambdas/
+
 
 # ─── Static Hosting ───────────────────────────────────────────────────────────
 
@@ -117,8 +139,6 @@ Resources:
         SigningBehavior: always
         SigningProtocol: sigv4
 
-  # This resource owns the bucket policy for the existing static bucket.
-  # The frontend pipeline.yaml must NOT have a WebsiteBucketPolicy resource for the same bucket.
   WebsiteStaticBucketPolicy:
     Type: AWS::S3::BucketPolicy
     Properties:
@@ -141,7 +161,7 @@ Resources:
     Properties:
       DistributionConfig:
         Enabled: true
-        Comment: "amir-ghahari.dev website CDN distribution"
+        Comment: "amir-ghahari.dev personal website CDN distribution"
         DefaultRootObject: index.html
         HttpVersion: http2and3
         IPV6Enabled: true
@@ -153,10 +173,7 @@ Resources:
           SslSupportMethod: sni-only
           MinimumProtocolVersion: TLSv1.2_2021
         Logging:
-          Bucket: !Sub
-            - "${LoggingBucketName}.s3.amazonaws.com"
-            - LoggingBucketName: !ImportValue
-                Fn::Sub: "${FoundationStackName}-LoggingBucketName"
+          Bucket: !Sub "${WebsiteLoggingBucket}.s3.amazonaws.com"
           Prefix: cloudfront-access/
         Origins:
           - Id: StaticS3Origin
@@ -178,16 +195,9 @@ Resources:
           Compress: true
           TargetOriginId: StaticS3Origin
           ViewerProtocolPolicy: redirect-to-https
-
-  WwwToRootRecord:
-    Type: AWS::Route53::RecordSet
-    Properties:
-      HostedZoneId: !Ref HostedZoneId
-      Name: !Sub "www.${RootDomain}."
-      Type: A
-      AliasTarget:
-        DNSName: !Sub "${RootDomain}."
-        HostedZoneId: !Ref HostedZoneId
+      Tags:
+        - Key: app
+          Value: amirghahari-website-backend
 
   RootDomainAliasRecord:
     Type: AWS::Route53::RecordSet
@@ -224,6 +234,9 @@ Resources:
       ProvisionedThroughput:
         ReadCapacityUnits: 1
         WriteCapacityUnits: 1
+      Tags:
+        - Key: app
+          Value: amirghahari-website-backend
 
 
 # ─── SNS ─────────────────────────────────────────────────────────────────────
@@ -232,6 +245,9 @@ Resources:
     Type: AWS::SNS::Topic
     Properties:
       TopicName: !Ref ContactSNSTopicName
+      Tags:
+        - Key: app
+          Value: amirghahari-website-backend
 
   MySubscription:
     Type: AWS::SNS::Subscription
@@ -261,7 +277,7 @@ Resources:
   WebsiteContactLambdaRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Ref LambdaRoleName
+      RoleName: !Sub '${AWS::StackName}-contact-lambda-role'
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -270,32 +286,25 @@ Resources:
               Service: lambda.amazonaws.com
             Action: sts:AssumeRole
       ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
-      Policies:
-        - PolicyName: DynamoDBAndSNSAccess
-          PolicyDocument:
-            Version: "2012-10-17"
-            Statement:
-              - Effect: Allow
-                Action:
-                  - dynamodb:PutItem
-                Resource: !GetAtt DynamoDBWebsiteContactTable.Arn
-              - Effect: Allow
-                Action:
-                  - sns:Publish
-                Resource: !Ref WebsiteContactSNSTopic
+        - arn:aws:iam::aws:policy/AdministratorAccess
+      Tags:
+        - Key: app
+          Value: amirghahari-website-backend
 
   LambdaLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: !Sub "/aws/lambda/${LambdaFunctionName}"
+      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-contact-lambda"
       RetentionInDays: 30
+      Tags:
+        - Key: app
+          Value: amirghahari-website-backend
 
   WebsiteContactLambda:
     Type: AWS::Lambda::Function
     DependsOn: LambdaLogGroup
     Properties:
-      FunctionName: !Ref LambdaFunctionName
+      FunctionName: !Sub '${AWS::StackName}-contact-lambda'
       Description: "Handles contact form POST requests: validates input, stores in DynamoDB, notifies via SNS."
       Architectures:
         - x86_64
@@ -307,13 +316,15 @@ Resources:
         Size: 512
       Role: !GetAtt WebsiteContactLambdaRole.Arn
       Code:
-        S3Bucket: !ImportValue
-          Fn::Sub: "${FoundationStackName}-LambdasBucketName"
+        S3Bucket: !Ref WebsiteLambdasBucket
         S3Key: !Ref LambdaS3Key
       Environment:
         Variables:
           TABLE_NAME: !Ref DynamoDBWebsiteContactTable
           TOPIC_ARN: !Ref WebsiteContactSNSTopic
+      Tags:
+        - Key: app
+          Value: amirghahari-website-backend
 
   ApiGatewayInvokeLambdaPermission:
     Type: AWS::Lambda::Permission
@@ -329,8 +340,11 @@ Resources:
   ApiGatewayLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: !Sub "/aws/apigateway/${ApiName}"
+      LogGroupName: !Sub "/aws/apigateway/${AWS::StackName}-apigateway"
       RetentionInDays: 30
+      Tags:
+        - Key: app
+          Value: amirghahari-website-backend
 
 
 # ─── API Gateway ──────────────────────────────────────────────────────────────
@@ -338,7 +352,7 @@ Resources:
   ApiGatewayRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Ref ApiGatewayRoleName
+      RoleName: !Sub '${AWS::StackName}-apigateway-role'
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -347,7 +361,10 @@ Resources:
               Service: apigateway.amazonaws.com
             Action: sts:AssumeRole
       ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs
+        - arn:aws:iam::aws:policy/AdministratorAccess
+      Tags:
+        - Key: app
+          Value: amirghahari-website-backend
 
   ApiGatewayAccount:
     Type: AWS::ApiGateway::Account
@@ -357,7 +374,7 @@ Resources:
   WebsiteApi:
     Type: AWS::ApiGateway::RestApi
     Properties:
-      Name: !Ref ApiName
+      Name: !Sub '${AWS::StackName}-apigateway-server'
       Description: "REST API backend for the amir-ghahari.dev website contact form."
       ApiKeySourceType: HEADER
       EndpointConfiguration:
@@ -365,6 +382,9 @@ Resources:
           - REGIONAL
         IpAddressType: ipv4
       Mode: overwrite
+      Tags:
+        - Key: app
+          Value: amirghahari-website-backend
 
   WebsiteContactResource:
     Type: AWS::ApiGateway::Resource
@@ -384,7 +404,7 @@ Resources:
       Integration:
         Type: AWS_PROXY
         IntegrationHttpMethod: POST
-        TimeoutInMillis: 3000
+        TimeoutInMillis: 25000
         Uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${WebsiteContactLambda.Arn}/invocations"
 
   ContactOptionsMethod:

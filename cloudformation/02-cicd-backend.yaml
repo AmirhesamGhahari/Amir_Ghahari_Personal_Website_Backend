@@ -1,0 +1,296 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: |
+  Backend CI/CD stack for amir-ghahari.dev.
+  Creates a CodePipeline that watches the backend GitHub repo and automatically:
+    1. Packages the Lambda function into a ZIP and uploads it to S3
+    2. Validates both CloudFormation templates
+    3. Deploys both stacks in sequence:
+         a. 01-website.yaml  (CloudFront + Lambda + API Gateway + DynamoDB + SNS + shared S3)
+         b. 02-cicd-backend.yaml (this stack — self-update)
+
+  After deploying this stack, one manual step is required:
+    AWS Console → CodePipeline → Settings → Connections
+    → find the GitHub connection (status: Pending) → click "Update pending connection"
+    → authorize via GitHub OAuth → status changes to "Available"
+  After that, the pipeline is fully automated on every push to the configured branch.
+
+
+Parameters:
+
+  BackendStackName:
+    Type: String
+    Default: amirghahari-website-backend
+    Description: Name of the 01-website.yaml stack that this pipeline will create/update.
+
+  CicdStackName:
+    Type: String
+    Default: amirghahari-backend-cicd
+    Description: Name of THIS stack — used in the self-update deploy action. Must match the actual deployed stack name.
+
+  StaticBucketName:
+    Type: String
+    Default: amirghahari-website-frontend-contexts
+    Description: Name of the existing static website S3 bucket — passed through to 01-website.yaml.
+
+  GitHubOwner:
+    Type: String
+    Default: AmirhesamGhahari
+    Description: GitHub username or organization that owns the backend repository.
+
+  GitHubRepo:
+    Type: String
+    Default: Amir_Ghahari_Personal_Website_Backend
+    Description: Name of the GitHub repository containing the backend source code (this repo).
+
+  GitHubBranch:
+    Type: String
+    Default: main
+    Description: Branch to trigger the pipeline on.
+
+  GitHubConnectionName:
+    Type: String
+    Default: amirghahari-github-connection
+    Description: Name of the CodeStar Connection to GitHub.
+
+  # These parameters mirror the defaults in 01-website.yaml. Used to pass values to the
+  # website deploy action and to configure the CodeBuild environment.
+  ContactTableName:
+    Type: String
+    Default: amirghahari-website-contacts-table
+  ContactSNSTopicName:
+    Type: String
+    Default: amirghahari-website-contacts-topic
+  HostedZoneId:
+    Type: String
+    Default: Z068537516QXV7OMQVCH1
+  LoggingBucketName:
+    Type: String
+    Default: amirghahari-website-access-loggings
+    Description: Logging bucket name — passed through to 01-website.yaml.
+  LambdasBucketName:
+    Type: String
+    Default: amirghahari-website-lambdas
+    Description: Lambdas bucket name — passed to CodeBuild (LAMBDAS_BUCKET) and to 01-website.yaml.
+  ArtifactsBucketName:
+    Type: String
+    Default: amirghahari-backend-pipeline-artifacts
+    Description: Name of the CodePipeline artifacts bucket — owned and created by this stack.
+
+
+Resources:
+
+# ─── GitHub Connection ────────────────────────────────────────────────────────
+  GitHubConnection:
+    Type: AWS::CodeStarConnections::Connection
+    Properties:
+      ConnectionName: !Ref GitHubConnectionName
+      ProviderType: GitHub
+      Tags:
+        - Key: app
+          Value: amirghahari-website-backend
+
+
+# ─── Artifacts Bucket ────────────────────────────────────────────────────────
+  PipelineArtifactsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref ArtifactsBucketName
+      VersioningConfiguration:
+        Status: Enabled
+
+
+# ─── IAM Roles ───────────────────────────────────────────────────────────────
+
+  CodeBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${AWS::StackName}-codebuild-role'
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AdministratorAccess
+      Tags:
+        - Key: app
+          Value: amirghahari-website-backend
+
+  CodePipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${AWS::StackName}-codepipeline-role'
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codepipeline.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AdministratorAccess
+      Tags:
+        - Key: app
+          Value: amirghahari-website-backend
+
+  CloudFormationDeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${AWS::StackName}-cloudformation-role'
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudformation.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AdministratorAccess
+      Tags:
+        - Key: app
+          Value: amirghahari-website-backend
+
+
+# ─── CodeBuild Project ────────────────────────────────────────────────────────
+
+  BackendBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub '${AWS::StackName}-build'
+      ServiceRole: !GetAtt CodeBuildRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:7.0
+        EnvironmentVariables:
+          - Name: LAMBDAS_BUCKET
+            Value: !Ref LambdasBucketName
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: buildspec/backend-buildspec.yml
+
+
+# ─── CodePipeline ─────────────────────────────────────────────────────────────
+
+  BackendPipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      Name: !Sub '${AWS::StackName}-pipeline'
+      RoleArn: !GetAtt CodePipelineRole.Arn
+      ArtifactStore:
+        Type: S3
+        Location: !Ref PipelineArtifactsBucket
+      Stages:
+
+        - Name: Source
+          Actions:
+            - Name: GitHubSource
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Provider: CodeStarSourceConnection
+                Version: "1"
+              Configuration:
+                ConnectionArn: !Ref GitHubConnection
+                FullRepositoryId: !Sub "${GitHubOwner}/${GitHubRepo}"
+                BranchName: !Ref GitHubBranch
+                OutputArtifactFormat: CODE_ZIP
+              OutputArtifacts:
+                - Name: SourceArtifact
+              RunOrder: 1
+
+        - Name: Build
+          Actions:
+            - Name: BuildAndPackage
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: "1"
+              Configuration:
+                ProjectName: !Ref BackendBuildProject
+              InputArtifacts:
+                - Name: SourceArtifact
+              OutputArtifacts:
+                - Name: BuildArtifact
+              RunOrder: 1
+
+        - Name: Deploy
+          Actions:
+            - Name: DeployWebsite
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CloudFormation
+                Version: "1"
+              Configuration:
+                ActionMode: CREATE_UPDATE
+                StackName: !Ref BackendStackName
+                TemplatePath: "BuildArtifact::cloudformation/01-website.yaml"
+                Capabilities: CAPABILITY_NAMED_IAM
+                RoleArn: !GetAtt CloudFormationDeployRole.Arn
+                ParameterOverrides: !Sub |
+                  {
+                    "StaticBucketName": "${StaticBucketName}",
+                    "ContactTableName": "${ContactTableName}",
+                    "ContactSNSTopicName": "${ContactSNSTopicName}",
+                    "HostedZoneId": "${HostedZoneId}",
+                    "LoggingBucketName": "${LoggingBucketName}",
+                    "LambdasBucketName": "${LambdasBucketName}"
+                  }
+              InputArtifacts:
+                - Name: BuildArtifact
+              RunOrder: 1
+
+            - Name: DeployCicd
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CloudFormation
+                Version: "1"
+              Configuration:
+                ActionMode: CREATE_UPDATE
+                StackName: !Ref CicdStackName
+                TemplatePath: "BuildArtifact::cloudformation/02-cicd-backend.yaml"
+                Capabilities: CAPABILITY_NAMED_IAM
+                RoleArn: !GetAtt CloudFormationDeployRole.Arn
+                ParameterOverrides: !Sub |
+                  {
+                    "BackendStackName": "${BackendStackName}",
+                    "CicdStackName": "${CicdStackName}",
+                    "StaticBucketName": "${StaticBucketName}",
+                    "GitHubOwner": "${GitHubOwner}",
+                    "GitHubRepo": "${GitHubRepo}",
+                    "GitHubBranch": "${GitHubBranch}",
+                    "GitHubConnectionName": "${GitHubConnectionName}",
+                    "ContactTableName": "${ContactTableName}",
+                    "ContactSNSTopicName": "${ContactSNSTopicName}",
+                    "HostedZoneId": "${HostedZoneId}",
+                    "LoggingBucketName": "${LoggingBucketName}",
+                    "LambdasBucketName": "${LambdasBucketName}",
+                    "ArtifactsBucketName": "${ArtifactsBucketName}"
+                  }
+              InputArtifacts:
+                - Name: BuildArtifact
+              RunOrder: 2
+
+      Tags:
+        - Key: app
+          Value: amirghahari-website-backend
+
+
+Outputs:
+
+  PipelineUrl:
+    Description: AWS Console URL for the backend CI/CD pipeline
+    Value: !Sub "https://${AWS::Region}.console.aws.amazon.com/codesuite/codepipeline/pipelines/${BackendPipeline}/view"
+
+  GitHubConnectionArn:
+    Description: |
+      ARN of the GitHub CodeStar Connection.
+      Status starts as Pending — activate it manually in the AWS Console before the pipeline can run.
+    Value: !Ref GitHubConnection
