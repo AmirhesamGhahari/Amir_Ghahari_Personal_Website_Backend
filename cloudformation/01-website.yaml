@@ -161,7 +161,7 @@ Resources:
     Properties:
       DistributionConfig:
         Enabled: true
-        Comment: "amir-ghahari.dev personal website CDN distribution"
+        Comment: "amir-ghahari.dev website CDN distribution"
         DefaultRootObject: index.html
         HttpVersion: http2and3
         IPV6Enabled: true
