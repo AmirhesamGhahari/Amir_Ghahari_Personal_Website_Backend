@@ -229,7 +229,7 @@ Resources:
               Configuration:
                 ActionMode: CREATE_UPDATE
                 StackName: !Ref BackendStackName
-                TemplatePath: "SourceArtifact::cloudformation/01-website.yaml"
+                TemplatePath: "BuildArtifact::cloudformation/01-website.yaml"
                 Capabilities: CAPABILITY_NAMED_IAM
                 RoleArn: !GetAtt CloudFormationDeployRole.Arn
                 ParameterOverrides: !Sub |
@@ -242,7 +242,7 @@ Resources:
                     "LambdasBucketName": "${LambdasBucketName}"
                   }
               InputArtifacts:
-                - Name: SourceArtifact
+                - Name: BuildArtifact
               RunOrder: 2
 
             - Name: DeployCicd
@@ -254,7 +254,7 @@ Resources:
               Configuration:
                 ActionMode: CREATE_UPDATE
                 StackName: !Ref CicdStackName
-                TemplatePath: "SourceArtifact::cloudformation/02-cicd-backend.yaml"
+                TemplatePath: "BuildArtifact::cloudformation/02-cicd-backend.yaml"
                 Capabilities: CAPABILITY_NAMED_IAM
                 RoleArn: !GetAtt CloudFormationDeployRole.Arn
                 ParameterOverrides: !Sub |
@@ -274,7 +274,7 @@ Resources:
                     "ArtifactsBucketName": "${ArtifactsBucketName}"
                   }
               InputArtifacts:
-                - Name: SourceArtifact
+                - Name: BuildArtifact
               RunOrder: 1
 
       Tags:

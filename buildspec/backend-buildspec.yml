@@ -16,3 +16,6 @@ phases:
       - aws s3 cp website_post_contact.zip s3://${LAMBDAS_BUCKET}/website_post_contact.zip
       - echo "Lambda ZIP uploaded to s3://${LAMBDAS_BUCKET}/website_post_contact.zip"
 
+artifacts:
+  files:
+    - '**/*'
